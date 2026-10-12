@@ -54,6 +54,11 @@ jobs:
         run: just setup-python
       - name: Build OMP
         run: just build-release "${{ matrix.python_config }}"
+      - name: Verify Linux extended-attribute preservation
+        if: runner.os == 'Linux'
+        env:
+          PYO3_CONFIG_FILE: ${{ github.workspace }}/${{ matrix.python_config }}
+        run: cargo test --release --locked -p omp-shell-builtins --lib support::xattr::tests
       - name: Smoke test and package
         env:
           ASSET: ${{ matrix.asset }}
