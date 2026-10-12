@@ -172,11 +172,18 @@ fn read_xattr_buffer(
 	loop {
 		let result = (|| {
 			let size = read(&mut [])?;
-			// A zero-length read is another size query, not a value read. Use
-			// at least one byte so growth from an empty value is detected too.
-			buffer.resize(size.max(1), 0);
-			let size = read(&mut buffer)?;
-			buffer.truncate(size);
+			if size == 0 {
+				// A nonempty scratch read detects growth without allocating
+				// for the common case of an empty list or attribute value.
+				let mut scratch = [0_u8];
+				let size = read(&mut scratch)?;
+				buffer.clear();
+				buffer.extend_from_slice(&scratch[..size]);
+			} else {
+				buffer.resize(size, 0);
+				let size = read(&mut buffer)?;
+				buffer.truncate(size);
+			}
 			Ok(())
 		})();
 		match result {

@@ -25,6 +25,10 @@ permissions:
   contents: read
   actions: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
@@ -193,6 +197,7 @@ jobs:
         with:
           name: ${{ inputs.profile }}-evidence-${{ matrix.target }}
           path: evidence/
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
       - name: Upload qualified release package

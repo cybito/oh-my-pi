@@ -4,9 +4,10 @@ The python-build-standalone release describes CPython and each extension's
 native link inputs in ``PYTHON.json``.  This generator follows that metadata,
 reads the release's referenced license corpus, using one tracked, audited
 upstream fallback for the release's missing Zstandard text, and then appends
-license files from every frozen wheel. Any other missing referenced license is
-a hard error. Dynamic host libraries are deliberately outside the
-bundled-component corpus.
+license files from every frozen wheel. Only the audited GNU ARM64 archive's
+classic-zlib variant may omit its unused zlib-ng reference; all other missing
+referenced licenses are hard errors. Dynamic host libraries are deliberately
+outside the bundled-component corpus.
 
 Usage: gen-py-notices.py VENDOR_DIR OUT
 """
@@ -24,6 +25,12 @@ AUDITED_LICENSE_FALLBACKS = {
         Path(__file__).resolve().parent.parent / "licenses" / "LICENSE.zstd.txt",
     ),
 }
+
+AUDITED_GNU_ARCHIVE = (
+    "cpython-3.14.7+20260807-aarch64-unknown-linux-gnu-freethreaded+debug-full"
+)
+ZLIB_LICENSE = "licenses/LICENSE.zlib.txt"
+ZLIB_NG_LICENSE = "licenses/LICENSE.zlib-ng.txt"
 
 HEADER = """Third-party notices
 ===================
@@ -71,6 +78,21 @@ def release_licenses(vendor: Path) -> tuple[str, dict[str, tuple[str, ...]], dic
     if not isinstance(version, str) or not version:
         fail(f"{metadata_path} has no python_version")
 
+    audited_gnu_release = False
+    if (
+        metadata.get("version") == "8"
+        and version == "3.14.7"
+        and metadata.get("target_triple") == "aarch64-unknown-linux-gnu"
+        and metadata.get("build_options") == "freethreaded+debug"
+    ):
+        try:
+            audited_gnu_release = (
+                (vendor / ".archive.stamp").read_text(encoding="utf-8").strip()
+                == AUDITED_GNU_ARCHIVE
+            )
+        except OSError:
+            pass
+
     cpython_ref, cpython_path = safe_release_path(
         vendor, metadata.get("license_path"), "CPython"
     )
@@ -80,14 +102,14 @@ def release_licenses(vendor: Path) -> tuple[str, dict[str, tuple[str, ...]], dic
     try:
         extensions = metadata["build_info"]["extensions"]
         variants = (
-            variant
-            for extension_variants in extensions.values()
+            (extension, variant)
+            for extension, extension_variants in extensions.items()
             for variant in extension_variants
         )
     except (AttributeError, KeyError, TypeError) as error:
         fail(f"{metadata_path} has malformed build_info.extensions: {error}")
 
-    for variant in variants:
+    for extension, variant in variants:
         links = variant.get("links", ())
         static_names = []
         for link in links:
@@ -111,6 +133,23 @@ def release_licenses(vendor: Path) -> tuple[str, dict[str, tuple[str, ...]], dic
             safe_release_path(vendor, value, f"native component {', '.join(static_names)}")
             for value in raw_paths
         ]
+        # PBS 20260807 maps both zlib implementations to library name "z", but
+        # this pinned GNU target builds classic zlib 1.3.2 only (targets.yml,
+        # downloads.py, build-zlib.sh at 00c8a06113f11220667c3bcf5fab1672ff9e78ef).
+        # Actual metadata/corpus: github.com/cybito/oh-my-pi/actions/runs/38314581444.
+        # Match the audited variant exactly; mixed links, extra paths, unknown
+        # releases, or missing classic-zlib text must keep the strict behavior.
+        if (
+            audited_gnu_release
+            and extension == "zlib"
+            and variant.get("variant") == "default"
+            and links == [{"name": "z", "path_static": "build/lib/libz.a"}]
+            and len(paths) == 2
+            and {relative for relative, _ in paths} == {ZLIB_LICENSE, ZLIB_NG_LICENSE}
+            and (vendor / ZLIB_LICENSE).is_file()
+            and not (vendor / ZLIB_NG_LICENSE).exists()
+        ):
+            paths = [(relative, path) for relative, path in paths if relative != ZLIB_NG_LICENSE]
         for name in static_names:
             references.setdefault(name, set()).update(relative for relative, _ in paths)
         for relative, path in paths:
