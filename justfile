@@ -116,8 +116,8 @@ build:
 
 # Build the `omp` CLI/daemon binary (release profile; macOS needs vendored release Python + Homebrew LLD, see AGENTS.md "Embedded Python").
 [group('build & check')]
-build-release:
-    PYO3_CONFIG_FILE="{{ justfile_directory() }}/vendor/python-release/pyo3-config.txt" \
+build-release python_config="vendor/python-release/pyo3-config.txt":
+    PYO3_CONFIG_FILE="{{ justfile_directory() }}/{{ python_config }}" \
         cargo build -p omp-app --bin omp --release --locked
 
 # ---------------------------------------------------------------------------

@@ -149,6 +149,24 @@ builds:
 crates/py/scripts/fetch-python.sh
 ```
 
+## 本 fork 的 ARM64 测试发行
+
+发行分支：`omp2-release`；上游基线：`2f92f3b5aa2035d21c9f016f9ff6350795e5685a`。
+在 GitHub Actions 手动运行 **OMP2 ARM64 Release**，填写唯一 tag；
+两平台编译和 CLI 烟测均成功后才发布预发行 Release。
+
+- `omp2-aarch64-apple-darwin.tar.gz`：Apple Silicon macOS，`macos-15` 原生编译。
+- `omp2-aarch64-unknown-linux-gnu.tar.gz`：Linux ARM64，Ubuntu 24.04 原生编译。
+- 每个包附 SHA-256 校验文件，包内含 `omp2`、许可证和 `BUILD.txt`。
+
+先在下载目录运行 `shasum -a 256 -c <包名>.sha256`，再解压，将 `omp2`
+安装至 `~/.local/bin/omp2`；不要覆盖 `omp`。无需本地 Rust 或 Python 工具链。
+Linux 的运行库以构建日志中的 `ldd` 结果为准。
+
+测试时使用 `OMP_DATA_DIR` 和 `OMP_CONFIG_DIR` 指定独立数据与配置目录；
+不自动迁移现有 OMP 的凭据、插件或会话。
+恢复原状时删除新增的 `~/.local/bin/omp2` 和专属安装目录；现有 `omp` 不变。
+
 ## Conventions
 
 Dependency, allocation, async, and TUI-rendering rules are mandatory and
