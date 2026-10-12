@@ -39,7 +39,15 @@ case "$(uname -s):$(uname -m)" in
     ;;
   Linux:aarch64)
     sudo apt-get update
-    sudo apt-get install --no-install-recommends -y pipx zstd ninja-build pkg-config clang libclang-dev libpipewire-0.3-dev libasound2-dev
+    sudo apt-get install --no-install-recommends -y pipx zstd ninja-build pkg-config clang-18 lld-18 libclang-dev libpipewire-0.3-dev libasound2-dev
+    # GNU ld cannot resolve the Python dependency archives preceding libpython.
+    # Match the metadata-driven link contract with LLD's archive backreferences.
+    {
+      echo CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/clang-18
+      echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-C link-arg=--ld-path=/usr/bin/ld.lld-18'
+      # Cranelift replaces an observed workspace NEON intrinsic with a trap.
+      echo CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm
+    } >> "$GITHUB_ENV"
     command -v uv >/dev/null || pipx install uv
     echo "$HOME/.local/bin" >> "$GITHUB_PATH"
     fetch_tool cmake https://github.com/Kitware/CMake/releases/download/v3.31.9/cmake-3.31.9-linux-aarch64.tar.gz 09b7127b09e3d3ed5fa894f4e59f6a01112f267da6acc4249e46dba97b14afcb

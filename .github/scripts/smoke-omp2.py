@@ -56,15 +56,25 @@ def print_smoke(binary: Path, evidence: Path, home: Path) -> None:
     )
     (evidence / "print.stdout").write_text(result.stdout)
     (evidence / "print.stderr").write_text(result.stderr)
+    if result.mock is not None:
+        (evidence / "print.requests.json").write_text(json.dumps(result.mock["captures"], indent=2))
     require(not result.timed_out and result.exit_code == 0, f"print failed: {result.exit_code}\n{result.stderr}\n{result.stdout}")
     require(bool(result.of_type("agent_end")), "print did not settle agent_end")
     require(result.mock is not None and result.mock["served"] == 2, "tool loop did not complete exactly two requests")
-    tool_messages = (
-        message for message in result.mock["captures"][1]["messages"]
-        if message.get("role") == "tool"
+    executions = result.of_type("tool_execution_end")
+    require(
+        len(executions) == 1 and executions[0].get("isError") is False,
+        "native shell execution did not succeed",
     )
     require(
-        any("native-print-ok" in json.dumps(message.get("content")) for message in tool_messages),
+        any(part.get("type") == "text" and part.get("text") == "native-print-ok"
+            for part in executions[0]["result"]["content"]),
+        "native shell did not produce the expected stdout",
+    )
+    # The command constructs this marker; its arguments do not contain it.
+    # Do not assume a transport-specific message role for the forwarded result.
+    require(
+        "native-print-ok" in json.dumps(result.mock["captures"][1]),
         "native tool output did not reach the next provider request",
     )
     print("PASS: native print → envd → shell → follow-up → clean exit", flush=True)

@@ -109,6 +109,13 @@ jobs:
             if [[ "$RUNNER_OS" == macOS ]]; then
               /opt/homebrew/bin/ld64.lld --version
               crates/py/scripts/ld64.lld --version
+            else
+              /usr/bin/clang-18 --version
+              /usr/bin/ld.lld-18 --version
+              test "$CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER" = /usr/bin/clang-18
+              test "$CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS" = '-C link-arg=--ld-path=/usr/bin/ld.lld-18'
+              test "$CARGO_PROFILE_DEV_CODEGEN_BACKEND" = llvm
+              printf '%s\n' "$CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER" "$CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS" "$CARGO_PROFILE_DEV_CODEGEN_BACKEND"
             fi
             # Toolchain installation is remote; this step never compiles OMP.
             rustup show active-toolchain
