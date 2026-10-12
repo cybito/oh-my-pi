@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # audiopus_sys vendors an older Opus CMake project; CMake 4 requires an
+  # explicit policy floor for its pre-3.5 minimum declaration.
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -59,6 +64,7 @@ jobs:
           mkdir -p dist/package
           install -m 0755 target/release/omp dist/package/omp2
           cp LICENSE THIRD-PARTY-NOTICES.txt dist/package/
+          cp crates/py/THIRD-PARTY-NOTICES.txt dist/package/PYTHON-THIRD-PARTY-NOTICES.txt
           printf 'commit=%s\ntarget=%s\n' "$GITHUB_SHA" "$TARGET" > dist/package/BUILD.txt
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             ldd dist/package/omp2

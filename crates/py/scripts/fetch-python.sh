@@ -125,6 +125,10 @@ prepare_tree() {
 	fi
 
 	echo "generating ${VENDOR_NAME}/pyo3-config.txt..." >&2
+	local BUILD_FLAGS="Py_GIL_DISABLED"
+	case "$LIB_NAME" in
+		*td) BUILD_FLAGS="Py_DEBUG,Py_GIL_DISABLED" ;;
+	esac
 	cat > "$VENDOR/pyo3-config.txt" <<EOF
 implementation=CPython
 version=3.14
@@ -134,7 +138,7 @@ lib_name=${LIB_NAME}
 lib_dir=${CONFIG_DIR}
 executable=${EXECUTABLE}
 pointer_width=64
-build_flags=$(case "$LIB_NAME" in *td) echo "Py_DEBUG,Py_GIL_DISABLED";; *) echo "Py_GIL_DISABLED";; esac)
+build_flags=${BUILD_FLAGS}
 suppress_build_script_link_lines=false
 EOF
 
