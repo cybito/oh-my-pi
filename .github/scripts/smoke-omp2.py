@@ -33,22 +33,40 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def private_environment(home: Path) -> dict[str, str]:
+    # Each QA fixture supplies its own model-bearing OMP_DATA_DIR.
+    return {
+        "HOME": str(home),
+        "OMP_CONFIG_DIR": str(home / "config"),
+        "OMP_STATE_DIR": str(home / "state"),
+        "OMP_CACHE_DIR": str(home / "cache"),
+        "OMP_PROFILE": "default",
+    }
+
+
 def print_smoke(binary: Path, evidence: Path, home: Path) -> None:
     harness.OMP_BINARY = binary
     result = harness.drive(
-        harness.call("bash", command="printf native-print-ok", i="Running native smoke"),
+        harness.call("bash", command="printf '%s-%s' native print-ok", i="Running native smoke"),
         "native-turn-complete",
         prompt="Run the supplied native shell command.",
         args=["--no-ext"],
         timeout=60,
-        env={"HOME": str(home)},
+        env=private_environment(home),
     )
     (evidence / "print.stdout").write_text(result.stdout)
     (evidence / "print.stderr").write_text(result.stderr)
     require(not result.timed_out and result.exit_code == 0, f"print failed: {result.exit_code}\n{result.stderr}\n{result.stdout}")
     require(bool(result.of_type("agent_end")), "print did not settle agent_end")
     require(result.mock is not None and result.mock["served"] == 2, "tool loop did not complete exactly two requests")
-    require("native-print-ok" in json.dumps(result.mock["captures"][1]), "native tool output did not reach the next provider request")
+    tool_messages = (
+        message for message in result.mock["captures"][1]["messages"]
+        if message.get("role") == "tool"
+    )
+    require(
+        any("native-print-ok" in json.dumps(message.get("content")) for message in tool_messages),
+        "native tool output did not reach the next provider request",
+    )
     print("PASS: native print → envd → shell → follow-up → clean exit", flush=True)
 
 
@@ -89,7 +107,7 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
             process = subprocess.Popen(
                 [str(binary), "chat", "--no-ext", "--model", "mock"],
                 cwd=project,
-                env={**os.environ, "HOME": str(home), "OMP_DATA_DIR": str(data),
+                env={**os.environ, **private_environment(home), "OMP_DATA_DIR": str(data),
                      "TERM": "xterm-256color", "NO_COLOR": "1",
                      "OMP_TTY": os.ttyname(slave), "OMP_TUI_DEBUG": str(debug)},
                 stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
@@ -129,17 +147,17 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
 
             welcome = wait_surface(("Welcome back!", "omp v", "Ask anything"), "welcome.txt")
             print("NATIVE PTY WELCOME:\n" + welcome, flush=True)
-            os.write(master, b"Reply with native-pty-ok\r")
+            os.write(master, b"Reply with a short acknowledgement.\r")
             response = wait_surface(("native-pty-ok",), "response.txt")
             end = time.monotonic() + 40
             while request("values").get("values", {}).get("turn_active") is not False:
                 require(process.poll() is None and time.monotonic() < end, "interactive turn did not settle")
                 time.sleep(0.05)
             require(model.served == 1, "interactive input did not make exactly one provider request")
-            require("Reply with native-pty-ok" in json.dumps(model.captures), "ordinary PTY input did not reach the provider")
+            require("Reply with a short acknowledgement." in json.dumps(model.captures), "ordinary PTY input did not reach the provider")
             print("NATIVE PTY RESPONSE:\n" + response, flush=True)
-            os.write(master, b"\x03")
-            require(process.wait(timeout=15) == 0, "chat did not exit cleanly after Ctrl-C")
+            os.write(master, b"\x04")
+            require(process.wait(timeout=15) == 0, "chat did not exit cleanly after Ctrl-D")
             stop.set()
             reader.join(timeout=2)
             require(not reader.is_alive(), "PTY capture thread did not stop")
@@ -156,7 +174,7 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
             hidden = raw.rfind(b"\x1b[?25l")
             shown = raw.rfind(b"\x1b[?25h")
             require(shown >= 0 and shown > hidden, "terminal cursor was not restored")
-            print("PASS: real PTY welcome → typed input → response → Ctrl-C → terminal restore", flush=True)
+            print("PASS: real PTY welcome → typed input → response → Ctrl-D → terminal restore", flush=True)
     finally:
         if process is not None and process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)

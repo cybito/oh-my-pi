@@ -240,7 +240,7 @@ jobs:
 
             已知上游限制：内置 mv 的跨文件系统操作仍会忽略部分 xattr 错误，并遗漏嵌套目录属性；不要用测试版移动重要文件。未纳入推理预算语义改动。
 
-            使用独立命令 omp2 和独立 OMP_DATA_DIR；不要替换现有 omp 或共用现有用户状态。
+            使用独立命令 omp2，分别设置独立的 OMP_CONFIG_DIR、OMP_DATA_DIR、OMP_STATE_DIR、OMP_CACHE_DIR；不要替换现有 omp 或共用现有用户配置和状态。
           files: |
             dist/omp2-aarch64-apple-darwin.tar.gz
             dist/omp2-aarch64-apple-darwin.tar.gz.sha256

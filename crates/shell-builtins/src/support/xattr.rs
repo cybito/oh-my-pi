@@ -170,7 +170,7 @@ fn read_xattr_buffer(
 	let mut buffer = Vec::new();
 	let mut retries = 3;
 	loop {
-		let result = (|| {
+		let result: io::Result<()> = (|| {
 			let size = read(&mut [])?;
 			if size == 0 {
 				// A nonempty scratch read detects growth without allocating
