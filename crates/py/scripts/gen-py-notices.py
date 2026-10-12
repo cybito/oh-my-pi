@@ -103,6 +103,10 @@ def release_licenses(vendor: Path) -> tuple[str, dict[str, tuple[str, ...]], dic
         raw_paths = variant.get("license_paths")
         if not isinstance(raw_paths, list) or not raw_paths:
             fail(f"statically linked {', '.join(static_names)} has no license_paths")
+        # PBS 20260807's pythonbuild/utils.py::add_licenses_to_extension_entry
+        # unions paths across every link and matching DOWNLOADS entry. These are
+        # not generally alternatives: one shipped text cannot justify dropping
+        # an absent sibling, especially for variants with multiple components.
         paths = [
             safe_release_path(vendor, value, f"native component {', '.join(static_names)}")
             for value in raw_paths

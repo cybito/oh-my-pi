@@ -149,6 +149,16 @@ builds:
 crates/py/scripts/fetch-python.sh
 ```
 
+### 本 fork 的 ARM64 候选验证
+
+候选基于官方 `omp2` 快照 `2f92f3b5`，不是官方发行版。编译和工具链安装仅在 GitHub-hosted runner 上执行；本地仅下载成品，不替换现有 `omp`。
+
+`.github/workflows/release.yml` 按 `audit` → `debug` → `release` 分阶段执行，目标为原生 macOS ARM64 与 GNU Linux ARM64。`release` 必须引用同一提交上双目标均成功的 Debug run；工具、Python 原始元数据、许可证和运行证据均保存在 Actions artifacts。缺失必需许可证仍为硬错误，不使用社区补丁的通用缺失文件过滤。
+
+构建契约：源码固定的 Rust nightly、CPython 3.14.7/PBS 20260807、Bash 5+、CMake 3.31.9、just 1.58.0；macOS 两个上游链接器路径均解析至 LLD 22.x。Debug 验证 CLI、真实 PTY、目录锁和 Linux xattr；模型请求仅使用既有本地 QA fixture，不代表真实厂商认证或整个 workspace 通过。
+
+已知上游限制：内置 `mv` 的跨文件系统操作会忽略部分 xattr 错误，并遗漏嵌套目录属性；不要用测试版移动重要文件。本候选不纳入推理预算语义改动。测试时使用独立 `OMP_DATA_DIR`，不共用现有用户状态。
+
 ## Conventions
 
 Dependency, allocation, async, and TUI-rendering rules are mandatory and

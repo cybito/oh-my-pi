@@ -677,8 +677,6 @@ impl ServerConfig {
 
 	/// Acquires process authority on the opened project directory.
 	pub fn try_lock_authority(&self) -> Result<AuthorityLock> {
-		use cap_std::fs;
-
 		if self
 			.authority_held
 			.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -694,15 +692,7 @@ impl ServerConfig {
 			});
 		}
 		let result = (|| {
-			let root = self
-				.root
-				.try_clone()
-				.map(fs::Dir::into_std_file)
-				.map_err(|source| Error::Io {
-					operation: sf!("clone Environment authority handle"),
-					path: self.environment_root.clone(),
-					source,
-				})?;
+			let root = self.authority_handle()?;
 			root.try_lock().map_err(|source| Error::Io {
 				operation: sf!("lock Environment authority"),
 				path:      self.environment_root.clone(),
@@ -717,6 +707,38 @@ impl ServerConfig {
 				Err(error)
 			},
 		}
+	}
+
+	/// Opens a readable lock descriptor relative to the stable root capability.
+	///
+	/// Linux capability directories use `O_PATH`, which `flock` rejects. Opening
+	/// `.` with read access keeps the same directory identity across renames
+	/// without reopening its ambient path.
+	#[cfg(unix)]
+	fn authority_handle(&self) -> Result<fs::File> {
+		self
+			.root
+			.open(".")
+			.map(cap_std::fs::File::into_std)
+			.map_err(|source| Error::Io {
+				operation: sf!("open Environment authority handle"),
+				path: self.environment_root.clone(),
+				source,
+			})
+	}
+
+	/// Clones the descriptor the authority lock is taken on.
+	#[cfg(not(unix))]
+	fn authority_handle(&self) -> Result<fs::File> {
+		self
+			.root
+			.try_clone()
+			.map(Dir::into_std_file)
+			.map_err(|source| Error::Io {
+				operation: sf!("clone Environment authority handle"),
+				path: self.environment_root.clone(),
+				source,
+			})
 	}
 
 	pub(crate) fn clone_root(&self) -> Result<Dir> {
@@ -936,7 +958,7 @@ mod tests {
 		let root = TempDir::new().expect("temporary directory");
 		let config = ServerConfig::new(root.path()).expect("server config");
 		let lock = config.try_lock_authority().expect("first authority");
-		assert!(config.try_lock_authority().is_err());
+		assert!(config.clone().try_lock_authority().is_err());
 		drop(lock);
 		let _reacquired_authority = config.try_lock_authority().expect("released authority");
 	}
@@ -949,15 +971,23 @@ mod tests {
 		let new_root = parent.path().join("new");
 		fs::create_dir(&old_root).expect("create root");
 		let config = ServerConfig::new(&old_root).expect("server config");
-		let lock = config.try_lock_authority().expect("first authority");
-		fs::rename(&old_root, &new_root).expect("rename root");
+		fs::rename(&old_root, &new_root).expect("rename root before acquiring authority");
+		fs::create_dir(&old_root).expect("replace old root path");
+		let unrelated = ServerConfig::new(&old_root).expect("unrelated config");
+		let _unrelated_authority = unrelated.try_lock_authority().expect("unrelated authority");
+		let lock = config.try_lock_authority().expect("authority on the opened directory");
 
 		let replacement = ServerConfig::new(&new_root).expect("replacement config");
 		assert!(
-			replacement.try_lock_authority().is_err(),
+			matches!(
+				replacement.try_lock_authority(),
+				Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::WouldBlock
+			),
 			"renaming a live root must not create another authority"
 		);
 		drop(lock);
+		let reacquired_authority = config.try_lock_authority().expect("released original authority");
+		drop(reacquired_authority);
 		let _reacquired_authority = replacement
 			.try_lock_authority()
 			.expect("released renamed authority");

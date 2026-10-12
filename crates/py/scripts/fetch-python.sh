@@ -149,6 +149,9 @@ case "$(uname -s):$(uname -m)" in
 	Linux:x86_64)
 		prepare_tree "x86_64-unknown-linux-gnu" "freethreaded+debug" "python" "0"
 		;;
+	Linux:aarch64)
+		prepare_tree "aarch64-unknown-linux-gnu" "freethreaded+debug" "python" "0"
+		;;
 	*)
 		echo "error: no embedded Python archive configured for $(uname -s) $(uname -m)" >&2
 		exit 1

@@ -2010,6 +2010,44 @@ mod tests {
 		assert_eq!(fs::read(fixture.path().join("target.old")).unwrap(), b"old");
 	}
 
+	#[cfg(any(target_os = "linux", target_os = "android"))]
+	#[test]
+	fn file_copy_fallback_preserves_binary_and_empty_xattrs() {
+		use std::{ffi::OsString, io::Write as _, path::Path};
+
+		use crate::support::xattr::{apply_xattrs, retrieve_xattrs};
+
+		let fixture = tempdir().unwrap();
+		let source = fixture.path().join("source");
+		let target = fixture.path().join("target");
+		fs::write(&source, b"payload").unwrap();
+		let mut attrs = omp_core::FastHashMap::default();
+		attrs.insert(OsString::from("user.omp.binary"), b"\0\xffpayload\0".to_vec());
+		attrs.insert(OsString::from("user.omp.empty"), Vec::new());
+		if let Err(error) = apply_xattrs(&source, attrs) {
+			if matches!(error.raw_os_error(), Some(libc::EOPNOTSUPP | libc::ENOSYS)) {
+				writeln!(std::io::stderr().lock(), "SKIP mv xattr: 临时目录不支持扩展属性：{error}")
+					.unwrap();
+				return;
+			}
+			panic!("set source attributes: {error}");
+		}
+		let (mut host, _) = Host::for_test("mv", "", fixture.path());
+		super::rename_file_fallback(
+			&mut host,
+			Path::new("source"),
+			Path::new("target"),
+			None,
+			None,
+		)
+		.unwrap();
+		assert!(!source.exists());
+		assert_eq!(fs::read(&target).unwrap(), b"payload");
+		let attrs = retrieve_xattrs(&target).unwrap();
+		assert_eq!(attrs[&OsString::from("user.omp.binary")], b"\0\xffpayload\0");
+		assert!(attrs[&OsString::from("user.omp.empty")].is_empty());
+	}
+
 	#[test]
 	fn missing_source_reports_original_operand() {
 		let fixture = tempdir().unwrap();

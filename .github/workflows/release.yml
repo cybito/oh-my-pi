@@ -1,0 +1,243 @@
+name: OMP2 Bounded ARM64 Candidate
+run-name: OMP2 ${{ inputs.profile }} · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Audit first; debug before release
+        required: true
+        type: choice
+        options: [audit, debug, release]
+        default: audit
+      debug_run:
+        description: Successful debug run ID for this exact commit (release only)
+        required: false
+        type: string
+        default: ""
+      tag:
+        description: Unique prerelease tag (release only)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  gate:
+    name: Verify release prerequisite
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require successful dual-ARM64 debug proof for the same commit
+        if: inputs.profile == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEBUG_RUN: ${{ inputs.debug_run }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          repo = os.environ['GITHUB_REPOSITORY']
+          proof = os.environ['DEBUG_RUN']
+          tag = os.environ['RELEASE_TAG']
+          assert proof.isdigit(), 'release requires a debug run ID'
+          subprocess.run(['git', 'check-ref-format', 'refs/tags/' + tag], check=True)
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          run = api(f'repos/{repo}/actions/runs/{proof}')
+          assert run['head_sha'] == os.environ['GITHUB_SHA'], 'debug proof is for a different commit'
+          assert run['conclusion'] == 'success' and run['event'] == 'workflow_dispatch', 'debug proof did not succeed'
+          assert run['path'] == '.github/workflows/release.yml', 'debug proof used another workflow'
+          jobs = api(f'repos/{repo}/actions/runs/{proof}/jobs?per_page=100')['jobs']
+          passed = {job['name'] for job in jobs if job['conclusion'] == 'success'}
+          assert {'debug aarch64-apple-darwin', 'debug aarch64-unknown-linux-gnu'} <= passed, 'both native debug proofs are required'
+          # Never overwrite a previously published tag or release.
+          existing = subprocess.run(['gh', 'api', f'repos/{repo}/git/ref/tags/{tag}'], capture_output=True, text=True)
+          assert existing.returncode != 0 and 'HTTP 404' in existing.stderr, 'tag exists, or tag lookup was not conclusive'
+          print('PASS: both debug proofs match this exact source revision')
+          PY
+
+  native:
+    name: ${{ inputs.profile }} ${{ matrix.target }}
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            release_python: vendor/python-release/pyo3-config.txt
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            release_python: vendor/python/pyo3-config.txt
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      PROFILE: ${{ inputs.profile }}
+      TARGET: ${{ matrix.target }}
+      PYO3_CONFIG_FILE: ${{ github.workspace }}/${{ inputs.profile == 'release' && matrix.release_python || 'vendor/python/pyo3-config.txt' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare fixed native tools on this disposable runner
+        run: bash .github/scripts/setup-omp2.sh "$PROFILE"
+      - name: Qualify tools before compilation
+        run: |
+          mkdir -p evidence
+          {
+            uname -a
+            df -h
+            bash --version
+            test "$BASH_VERSINFO" -ge 5
+            cmake_version="$(cmake --version)"
+            printf '%s\n' "$cmake_version"
+            test "${cmake_version%%$'\n'*}" = 'cmake version 3.31.9'
+            just --version
+            test "$(just --version)" = 'just 1.58.0'
+            uv --version
+            zstd --version
+            ninja --version
+            if [[ "$RUNNER_OS" == macOS ]]; then
+              /opt/homebrew/bin/ld64.lld --version
+              crates/py/scripts/ld64.lld --version
+            fi
+            # Toolchain installation is remote; this step never compiles OMP.
+            rustup show active-toolchain
+            rustc -vV
+            cargo --version
+          } | tee evidence/tools.txt
+          python3 - <<'PY'
+          import os, subprocess
+          details = subprocess.check_output(['rustc', '-vV'], text=True)
+          assert 'host: ' + os.environ['TARGET'] in details, 'Rust host must match the native target'
+          PY
+      - name: Prepare pinned embedded Python without bypassing later notice validation
+        run: crates/py/scripts/fetch-python.sh "$PWD/vendor"
+      - name: Capture original target metadata and license corpus
+        run: python3 .github/scripts/audit-python.py vendor evidence/python "$TARGET"
+      - name: Verify strict Python notices and regression boundaries
+        run: |
+          python3 -m unittest discover -s scripts/qa/cases -p test_py_notices.py
+          for tree in python python-release; do
+            if [[ -d "vendor/$tree" ]]; then
+              python3 crates/py/scripts/gen-py-notices.py "vendor/$tree" "evidence/python/$tree/NOTICES.txt"
+            fi
+          done
+          if [[ "$PROFILE" == release && "$RUNNER_OS" == macOS ]]; then
+            cp evidence/python/python-release/NOTICES.txt crates/py/THIRD-PARTY-NOTICES.txt
+          else
+            cp evidence/python/python/NOTICES.txt crates/py/THIRD-PARTY-NOTICES.txt
+          fi
+      - name: Check the production CLI (no whole-workspace test build)
+        if: inputs.profile == 'debug'
+        run: just check-pkg omp-app
+      - name: Build the production CLI with default features
+        if: inputs.profile != 'audit'
+        run: |
+          if [[ "$PROFILE" == debug ]]; then
+            just build
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            just build-release
+          else
+            cargo build -p omp-app --bin omp --release --locked
+          fi
+      - name: Exercise the production binary and actual native PTY
+        if: inputs.profile != 'audit'
+        run: python3 .github/scripts/smoke-omp2.py "$PWD/target/$PROFILE/omp" evidence/runtime
+      - name: Verify directory authority locking
+        if: inputs.profile == 'debug'
+        run: cargo nextest run --locked -p omp-envd --lib docserver::types::tests --success-output immediate
+      - name: Verify actual Linux xattr capability before qualifying preservation
+        if: inputs.profile == 'debug' && runner.os == 'Linux'
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, tempfile
+          with tempfile.TemporaryDirectory() as directory:
+              path = pathlib.Path(directory) / 'probe'
+              path.write_bytes(b'fixture')
+              for name, value in [('user.omp2_binary', b'\x00\xffnative'), ('user.omp2_empty', b'')]:
+                  os.setxattr(path, name, value)
+                  assert os.getxattr(path, name) == value
+          print('PASS: runner filesystem supports binary and empty user attributes')
+          PY
+      - name: Verify Linux xattr helpers and mv fallback
+        if: inputs.profile == 'debug' && runner.os == 'Linux'
+        run: |
+          cargo nextest run --locked -p omp-shell-builtins --lib support::xattr::tests --success-output immediate
+          cargo nextest run --locked -p omp-shell-builtins --lib mv::tests::file_copy_fallback_preserves_binary_and_empty_xattrs --success-output immediate
+      - name: Package only a proven release binary
+        if: inputs.profile == 'release'
+        run: |
+          mkdir -p dist/package
+          install -m 0755 target/release/omp dist/package/omp2
+          cp LICENSE THIRD-PARTY-NOTICES.txt dist/package/
+          cp crates/py/THIRD-PARTY-NOTICES.txt dist/package/PYTHON-THIRD-PARTY-NOTICES.txt
+          printf 'commit=%s\ntarget=%s\ndebug_run=%s\n' "$GITHUB_SHA" "$TARGET" '${{ inputs.debug_run }}' > dist/package/BUILD.txt
+          cp evidence/tools.txt dist/package/BUILD-TOOLS.txt
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            ldd dist/package/omp2 | tee dist/package/DYNAMIC-LIBRARIES.txt
+            ! grep -q 'not found' dist/package/DYNAMIC-LIBRARIES.txt
+          else
+            otool -L dist/package/omp2 | tee dist/package/DYNAMIC-LIBRARIES.txt
+          fi
+          tar -czf "dist/omp2-$TARGET.tar.gz" -C dist/package .
+          (cd dist && shasum -a 256 "omp2-$TARGET.tar.gz" > "omp2-$TARGET.tar.gz.sha256")
+      - name: Preserve original evidence even on a failed gate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.profile }}-evidence-${{ matrix.target }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload qualified release package
+        if: inputs.profile == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: |
+            dist/omp2-${{ matrix.target }}.tar.gz
+            dist/omp2-${{ matrix.target }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish qualified dual-ARM64 prerelease
+    if: inputs.profile == 'release'
+    needs: native
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: OMP2 experimental ${{ inputs.tag }}
+          prerelease: true
+          make_latest: false
+          body: |
+            OMP2 实验构建，基于官方 omp2 快照 2f92f3b5 及审定的构建/启动修复；不是官方发行版。
+
+            macOS ARM64 与 GNU Linux ARM64 已分别通过原生 Debug 和 Release CLI/PTY 烟测。模型请求使用源码既有的本地 QA HTTP fixture，不代表真实厂商认证、所有工具或整个 workspace 测试通过。
+
+            固定 Rust nightly-2026-08-08、CPython 3.14.7/PBS 20260807、CMake 3.31.9、just 1.58.0；macOS 链接器为 LLD 22.x。包内提供确切源码版本、工具版本、动态库清单及许可证；压缩包另附 SHA-256。Linux 基于 Ubuntu 24.04（glibc 2.39）。
+
+            已知上游限制：内置 mv 的跨文件系统操作仍会忽略部分 xattr 错误，并遗漏嵌套目录属性；不要用测试版移动重要文件。未纳入推理预算语义改动。
+
+            使用独立命令 omp2 和独立 OMP_DATA_DIR；不要替换现有 omp 或共用现有用户状态。
+          files: |
+            dist/omp2-aarch64-apple-darwin.tar.gz
+            dist/omp2-aarch64-apple-darwin.tar.gz.sha256
+            dist/omp2-aarch64-unknown-linux-gnu.tar.gz
+            dist/omp2-aarch64-unknown-linux-gnu.tar.gz.sha256
