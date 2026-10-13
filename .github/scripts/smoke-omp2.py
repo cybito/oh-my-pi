@@ -87,6 +87,7 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
     master, slave = pty.openpty()
     fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     before = termios.tcgetattr(slave)
+    (evidence / "termios.before.txt").write_text(repr(before))
     raw = bytearray()
     stop = threading.Event()
 
@@ -154,7 +155,10 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
 
             welcome = wait_surface(("Welcome back!", "omp v", "Ask anything"), "welcome.txt")
             print("NATIVE PTY WELCOME:\n" + welcome, flush=True)
-            os.write(master, b"Reply with a short acknowledgement.\r")
+            (evidence / "termios.ready.txt").write_text(repr(termios.tcgetattr(slave)))
+            os.write(master, b"Reply with a short acknowledgement.")
+            wait_surface(("Reply with a short acknowledgement.",), "input.txt")
+            os.write(master, b"\r")
             response = wait_surface(("native-pty-ok",), "response.txt")
             end = time.monotonic() + 40
             while request("values").get("values", {}).get("turn_active") is not False:
@@ -173,7 +177,9 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
                 if not chunk:
                     break
                 raw.extend(chunk)
-            require(termios.tcgetattr(slave) == before, "chat did not restore termios")
+            after = termios.tcgetattr(slave)
+            (evidence / "termios.after.txt").write_text(repr(after))
+            require(after == before, f"chat did not restore termios:\nbefore={before!r}\nafter={after!r}")
             for mode in (1049, 1000, 1002, 1003, 1006):
                 entered = raw.rfind(f"\x1b[?{mode}h".encode())
                 exited = raw.rfind(f"\x1b[?{mode}l".encode())
@@ -193,6 +199,7 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
         stop.set()
         reader.join(timeout=2)
         (evidence / "chat.pty").write_bytes(raw)
+        (evidence / "chat.requests.json").write_text(json.dumps(model.captures, indent=2))
         os.close(master)
         os.close(slave)
         model.close()
