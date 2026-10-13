@@ -116,7 +116,9 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
                      "TERM": "xterm-256color", "NO_COLOR": "1",
                      "OMP_TTY": os.ttyname(slave), "OMP_TUI_DEBUG": str(debug)},
                 stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                start_new_session=True,
+                # A Darwin session leader's exit revokes its controlling PTY.
+                # Keep this session alive while still isolating the kill group.
+                process_group=0,
             )
             deadline = time.monotonic() + 40
             while True:
