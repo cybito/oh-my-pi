@@ -155,6 +155,8 @@ crates/py/scripts/fetch-python.sh
 
 `.github/workflows/release.yml` 按 `audit` → `debug` → `release` 分阶段执行，目标为原生 macOS ARM64 与 GNU Linux ARM64。`release` 必须引用同一提交上双目标均成功的 Debug run；工具、Python 原始元数据、许可证和运行证据均保存在 Actions artifacts。缺失必需许可证仍为硬错误，不使用社区补丁的通用缺失文件过滤。
 
+Release 编译保留 GitHub-hosted runner 的 360 分钟执行窗口；Debug 仍限制为 120 分钟。超时或 runner shutdown 不视为源码编译错误，不降低优化等级、不取消双目标运行和许可证门控。
+
 构建契约：源码固定的 Rust nightly、CPython 3.14.7/PBS 20260807、Bash 5+、CMake 3.31.9、just 1.58.0；macOS 两个上游链接器路径均解析至 LLD 22.x。GNU ARM64 在 GitHub 使用 Clang/LLD 18，Debug workspace 使用 LLVM codegen，避免 Cranelift 将已观察到的 NEON intrinsic 替换为 trap。Python 静态依赖的链接顺序需要 [LLD 的归档反向引用语义](https://lld.llvm.org/ELF/warn_backrefs.html)，不使用 GNU ld 单次扫描规则。Debug 验证 CLI、真实 PTY、目录锁和 Linux xattr；模型请求仅使用既有本地 QA fixture，不代表真实厂商认证或整个 workspace 通过。
 
 已知上游限制：内置 `mv` 的跨文件系统操作会忽略部分 xattr 错误，并遗漏嵌套目录属性；不要用测试版移动重要文件。本候选不纳入推理预算语义改动。测试时分别设置独立的 `OMP_CONFIG_DIR`、`OMP_DATA_DIR`、`OMP_STATE_DIR`、`OMP_CACHE_DIR`，不共用现有用户配置和状态。

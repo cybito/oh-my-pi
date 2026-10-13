@@ -81,7 +81,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
             release_python: vendor/python/pyo3-config.txt
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: ${{ inputs.profile == 'release' && 360 || 120 }}
     env:
       PROFILE: ${{ inputs.profile }}
       TARGET: ${{ matrix.target }}
