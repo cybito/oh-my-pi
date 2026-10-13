@@ -138,7 +138,7 @@ jobs:
           last = next(i for i, line in enumerate(lines) if line.startswith('async fn forward_native_event('))
           ranges = json.dumps([{'file': str(path), 'range': [first, last]}])
           subprocess.run(['rustfmt', '--edition', '2024', '--config-path', 'rustfmt.toml',
-                          '--file-lines', ranges, str(path)], check=True)
+                          '--unstable-features', '--file-lines', ranges, str(path)], check=True)
           PY
           cmp crates/envd/src/server.rs evidence/native-server.rs
       - name: Prepare pinned embedded Python without bypassing later notice validation
