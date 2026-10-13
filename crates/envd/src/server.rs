@@ -21,7 +21,7 @@ use omp_agent::{
 };
 use omp_cache::{github_cache::GithubCache, telemetry_cache::TelemetryIndex};
 use omp_con::Ctx;
-use omp_core::{Hash32, Str, Ulid, sf};
+use omp_core::{Hash32, Str, Ulid, encoding::hex, sf};
 use omp_env::{EnvClient, InProcessEnvTransport, partition::FramePipe};
 use omp_journal::blob;
 use omp_proto::{
@@ -40,7 +40,7 @@ use omp_proto::{
 };
 use omp_tool::{
 	Abort, ArgIssue, ArgPath, CallOutcome, Effects, ErasedEv, ErasedOutcome, IncomingParams,
-	Interrupt, Registry, RegistryError, ToolRoute, ToolTerminal,
+	Interrupt, Part as ToolPart, PromptCaps, Registry, RegistryError, ToolRoute, ToolTerminal,
 };
 use omp_tools::{
 	ask::PresenterSlot,
@@ -9131,6 +9131,8 @@ async fn spawn_native_invocation(
 														retention_session.as_deref(),
 														&lifecycle,
 														output_request,
+														&registry,
+														&name,
 														&blobs,
 														&responses,
 													)
@@ -9187,6 +9189,8 @@ async fn spawn_native_invocation(
 													retention_session.as_deref(),
 													&lifecycle,
 													output_request,
+													&registry,
+													&name,
 													&blobs,
 													&responses,
 												)
@@ -9344,6 +9348,71 @@ fn output_projection(
 	}
 }
 
+#[derive(Debug, Error)]
+enum NativeProjectionError {
+	#[error(transparent)]
+	Registry(#[from] RegistryError),
+	#[error("native JSON output part is not UTF-8")]
+	JsonUtf8(#[from] str::Utf8Error),
+	#[error("native output blob hash is invalid")]
+	BlobHash,
+}
+
+fn project_native_parts(
+	registry: &Registry,
+	name: &Str,
+	verdict: &[u8],
+	useless: bool,
+) -> Result<Vec<thread_pb::Part>, NativeProjectionError> {
+	let identity = registry
+		.resolved_identity(name.as_str())
+		.ok_or_else(|| RegistryError::UnknownTool(name.clone()))?;
+	let caps = PromptCaps {
+		maximum_parts: u16::MAX,
+		maximum_text_bytes: u32::MAX,
+		media: true,
+		dialect: Default::default(),
+		model_class: Default::default(),
+	};
+	let projected = registry.project_verdict(&identity, verdict, useless, &caps)?;
+	let capacity = projected.parts.len()
+		+ projected
+			.parts
+			.iter()
+			.filter(|part| matches!(part, ToolPart::Blob { alt: Some(_), .. }))
+			.count();
+	let mut parts = Vec::with_capacity(capacity);
+	for part in projected.parts.iter() {
+		let kind = match part {
+			ToolPart::Text { text } => thread_pb::part::Kind::Text(text.as_str().to_owned()),
+			ToolPart::Json { json } => {
+				thread_pb::part::Kind::Text(str::from_utf8(json)?.to_owned())
+			},
+			ToolPart::Blob { blob, alt } => {
+				if let Some(alt) = alt {
+					parts.push(thread_pb::Part {
+						kind: Some(thread_pb::part::Kind::Text(alt.as_str().to_owned())),
+					});
+				}
+				let hash = hex::decode(blob.hash.as_str())
+					.into_vec()
+					.map_err(|_| NativeProjectionError::BlobHash)?;
+				if hash.len() != 32 {
+					return Err(NativeProjectionError::BlobHash);
+				}
+				thread_pb::part::Kind::Blob(thread_pb::Blob {
+					hash: hash.into(),
+					mime: blob.media_type.as_str().to_owned(),
+					size: blob.byte_len,
+					..Default::default()
+				})
+			},
+		};
+		parts.push(thread_pb::Part { kind: Some(kind) });
+	}
+	Ok(parts)
+}
+
 async fn forward_native_event(
 	event: Option<Result<ErasedEv, omp_tool::RegistryError>>,
 	cancelling: bool,
@@ -9353,6 +9422,8 @@ async fn forward_native_event(
 	retention_session: Option<&str>,
 	lifecycle: &NativeLifecycle,
 	output_request: omp_tool::OutputRequest,
+	registry: &Registry,
+	name: &Str,
 	blobs: &BlobHost,
 	responses: &flume::Sender<pb::ServerFrame>,
 ) -> NativeForward {
@@ -9378,6 +9449,7 @@ async fn forward_native_event(
 		},
 		Some(Ok(ErasedEv::Done(outcome))) => {
 			if lifecycle.claim_terminal() {
+				let projects_parts = matches!(&outcome, ErasedOutcome::Done { .. });
 				let (json, is_error, useless) = erased_outcome_wire(outcome);
 				let details_blob =
 					match blobs.put_verdict_bytes(retention_session, invocation_id, &json) {
@@ -9398,6 +9470,29 @@ async fn forward_native_event(
 							return NativeForward::Terminal;
 						},
 					};
+				let mut parts = if projects_parts {
+					match project_native_parts(registry, name, &json, useless) {
+						Ok(parts) => parts,
+						Err(error) => {
+							tracing::error!(
+								%error,
+								invocation_id = %invocation_id,
+								"could not project native verdict"
+							);
+							let _ = send_invocation_error(
+								responses,
+								request_id,
+								pb::ProtocolErrorCode::Internal,
+								"native verdict could not be projected",
+							)
+							.await;
+							return NativeForward::Terminal;
+						},
+					}
+				} else {
+					Vec::new()
+				};
+				let _ = project_wire_parts(&mut parts, output_request);
 				let source_bytes = u64::try_from(json.len()).unwrap_or(u64::MAX);
 				let limit = match output_request {
 					omp_tool::OutputRequest::Bounded => DEFAULT_RESULT_PROJECTION_BYTES,
@@ -9420,7 +9515,7 @@ async fn forward_native_event(
 						invocation_id: invocation_id.to_string(),
 						json: inline,
 						details_blob: Some(details_blob),
-						parts: Vec::new(),
+						parts,
 						is_error,
 						useless,
 						terminate: None,

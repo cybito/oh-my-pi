@@ -127,6 +127,11 @@ jobs:
           details = subprocess.check_output(['rustc', '-vV'], text=True)
           assert 'host: ' + os.environ['TARGET'] in details, 'Rust host must match the native target'
           PY
+      - name: Verify native result fix with the pinned formatter
+        run: |
+          cp crates/envd/src/server.rs evidence/native-server.rs
+          rustfmt --edition 2024 --config-path rustfmt.toml evidence/native-server.rs
+          cmp crates/envd/src/server.rs evidence/native-server.rs
       - name: Prepare pinned embedded Python without bypassing later notice validation
         run: crates/py/scripts/fetch-python.sh "$PWD/vendor"
       - name: Capture original target metadata and license corpus
