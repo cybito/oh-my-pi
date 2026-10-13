@@ -161,7 +161,7 @@ crates/py/scripts/fetch-python.sh
 
 原生工具完成后，由 `envd` 调用注册工具的结果投影器，发送有界的文本／JSON／blob 部件；不能仅转发原始 verdict 而把模型正文留空。CLI 回归同时检查真实 shell 输出及下一次请求中的工具正文，不能用输入回显或调用参数冒充结果。测试服务只监听 runner 内的 `127.0.0.1`、`auth = "none"`，不读取用户模型配置或使用真实 API Key。
 
-PTY 烟测只隔离进程组、保留父会话；避免 [Darwin 在会话 leader 退出时撤销控制终端](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_exit.c)，使父进程的验证句柄失效。仍要求实际回复、Ctrl-D 正常退出、完整 termios 相等及终端模式恢复，不跳过 macOS 恢复检查。
+PTY 烟测只隔离进程组、保留父会话；避免 [Darwin 在会话 leader 退出时撤销控制终端](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_exit.c)，使父进程的验证句柄失效。文字显示后单独发送 Enter，避免批量文字与回车混入同一个输入事件。恢复检查先通过 `FIONREAD` 查询输入队列，使 [XNU 自动处理 raw→canonical 后的 `PENDIN` 状态](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/tty.c)；不屏蔽标志、不写回属性。仍要求实际回复、Ctrl-D 正常退出、无可读残留输入、完整 termios 相等及终端模式恢复，不跳过 macOS 恢复检查。
 
 Python 许可证唯一额外例外来自真实归档审计：PBS 20260807 的 GNU ARM64 debug 归档静态链接经典 zlib 1.3.2，producer 却把同名 `z` 的 zlib-ng 许可证也并入引用。仅对该确切归档身份、元数据和单一静态链接形状排除不存在的错误引用；升级归档、混合组件及其他缺失许可证仍失败，必须重新审计。
 

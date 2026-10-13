@@ -86,6 +86,7 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
     debug = root / "tui.sock"
     master, slave = pty.openpty()
     fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+    fcntl.ioctl(slave, termios.FIONREAD, struct.pack("i", 0))
     before = termios.tcgetattr(slave)
     (evidence / "termios.before.txt").write_text(repr(before))
     raw = bytearray()
@@ -177,6 +178,10 @@ def pty_smoke(binary: Path, evidence: Path, root: Path, home: Path) -> None:
                 if not chunk:
                     break
                 raw.extend(chunk)
+            # XNU queues PENDIN on raw → canonical transitions. FIONREAD lets
+            # the line discipline process it; do not mask flags or reset modes.
+            queued = fcntl.ioctl(slave, termios.FIONREAD, struct.pack("i", 0))
+            require(struct.unpack("i", queued)[0] == 0, "chat left readable terminal input")
             after = termios.tcgetattr(slave)
             (evidence / "termios.after.txt").write_text(repr(after))
             require(after == before, f"chat did not restore termios:\nbefore={before!r}\nafter={after!r}")

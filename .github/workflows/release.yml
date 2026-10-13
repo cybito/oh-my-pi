@@ -173,25 +173,7 @@ jobs:
           fi
       - name: Exercise the production binary and actual native PTY
         if: inputs.profile != 'audit'
-        run: |
-          python3 - <<'PY'
-          import pathlib, pty, os, termios, tty
-          master, slave = pty.openpty()
-          try:
-              original = termios.tcgetattr(slave)
-              termios.tcsetattr(slave, termios.TCSANOW, original)
-              unchanged = termios.tcgetattr(slave)
-              tty.setraw(slave)
-              termios.tcsetattr(slave, termios.TCSANOW, original)
-              restored = termios.tcgetattr(slave)
-              report = f'original={original!r}\nunchanged={unchanged!r}\nrestored={restored!r}\n'
-              pathlib.Path('evidence/pty-baseline.txt').write_text(report)
-              print(report)
-          finally:
-              os.close(master)
-              os.close(slave)
-          PY
-          python3 .github/scripts/smoke-omp2.py "$PWD/target/$PROFILE/omp" evidence/runtime
+        run: python3 .github/scripts/smoke-omp2.py "$PWD/target/$PROFILE/omp" evidence/runtime
       - name: Verify directory authority locking
         if: inputs.profile == 'debug'
         run: cargo nextest run --locked -p omp-envd --lib docserver::types::tests --success-output immediate
