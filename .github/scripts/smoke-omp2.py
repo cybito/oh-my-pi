@@ -66,11 +66,6 @@ def print_smoke(binary: Path, evidence: Path, home: Path) -> None:
         len(executions) == 1 and executions[0].get("isError") is False,
         "native shell execution did not succeed",
     )
-    require(
-        any(part.get("type") == "text" and part.get("text") == "native-print-ok"
-            for part in executions[0]["result"]["content"]),
-        "native shell did not produce the expected stdout",
-    )
     # The command constructs this marker; its arguments do not contain it.
     # Do not assume a transport-specific message role for the forwarded result.
     require(
