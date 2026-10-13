@@ -169,7 +169,20 @@ jobs:
           elif [[ "$RUNNER_OS" == macOS ]]; then
             just build-release
           else
-            cargo build -p omp-app --bin omp --release --locked
+            setsid bash -c '
+              while true; do
+                {
+                  date -u
+                  free -m
+                  cat /proc/pressure/memory
+                  ps -C rustc,cargo,ld.lld-18,clang-18,Runner.Listener,Runner.Worker -o pid,comm,pcpu,rss || true
+                } | tee -a evidence/linux-release-resources.txt
+                sleep 30
+              done
+            ' &
+            monitor=$!
+            trap 'status=$?; kill -- -"$monitor" 2>/dev/null || true; wait "$monitor" 2>/dev/null || true; exit "$status"' EXIT
+            CARGO_BUILD_JOBS=1 cargo build -p omp-app --bin omp --release --locked
           fi
       - name: Exercise the production binary and actual native PTY
         if: inputs.profile != 'audit'
