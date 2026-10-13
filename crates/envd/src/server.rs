@@ -9368,11 +9368,11 @@ fn project_native_parts(
 		.resolved_identity(name.as_str())
 		.ok_or_else(|| RegistryError::UnknownTool(name.clone()))?;
 	let caps = PromptCaps {
-		maximum_parts: u16::MAX,
+		maximum_parts:      u16::MAX,
 		maximum_text_bytes: u32::MAX,
-		media: true,
-		dialect: Default::default(),
-		model_class: Default::default(),
+		media:              true,
+		dialect:            Default::default(),
+		model_class:        Default::default(),
 	};
 	let projected = registry.project_verdict(&identity, verdict, useless, &caps)?;
 	let capacity = projected.parts.len()
@@ -9385,9 +9385,7 @@ fn project_native_parts(
 	for part in projected.parts.iter() {
 		let kind = match part {
 			ToolPart::Text { text } => thread_pb::part::Kind::Text(text.as_str().to_owned()),
-			ToolPart::Json { json } => {
-				thread_pb::part::Kind::Text(str::from_utf8(json)?.to_owned())
-			},
+			ToolPart::Json { json } => thread_pb::part::Kind::Text(str::from_utf8(json)?.to_owned()),
 			ToolPart::Blob { blob, alt } => {
 				if let Some(alt) = alt {
 					parts.push(thread_pb::Part {

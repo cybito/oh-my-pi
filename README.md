@@ -159,6 +159,8 @@ crates/py/scripts/fetch-python.sh
 
 已知上游限制：内置 `mv` 的跨文件系统操作会忽略部分 xattr 错误，并遗漏嵌套目录属性；不要用测试版移动重要文件。本候选不纳入推理预算语义改动。测试时分别设置独立的 `OMP_CONFIG_DIR`、`OMP_DATA_DIR`、`OMP_STATE_DIR`、`OMP_CACHE_DIR`，不共用现有用户配置和状态。
 
+原生工具完成后，由 `envd` 调用注册工具的结果投影器，发送有界的文本／JSON／blob 部件；不能仅转发原始 verdict 而把模型正文留空。CLI 回归同时检查真实 shell 输出及下一次请求中的工具正文，不能用输入回显或调用参数冒充结果。测试服务只监听 runner 内的 `127.0.0.1`、`auth = "none"`，不读取用户模型配置或使用真实 API Key。
+
 Python 许可证唯一额外例外来自真实归档审计：PBS 20260807 的 GNU ARM64 debug 归档静态链接经典 zlib 1.3.2，producer 却把同名 `z` 的 zlib-ng 许可证也并入引用。仅对该确切归档身份、元数据和单一静态链接形状排除不存在的错误引用；升级归档、混合组件及其他缺失许可证仍失败，必须重新审计。
 
 ## Conventions
